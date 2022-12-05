@@ -401,6 +401,7 @@ def main_worker(gpu, ngpus_per_node, args):
             ckpt = {
                 'epoch': epoch + 1,
                 'best_acc1': best_acc1,
+                'args' : args,
                 'model': deepcopy(de_parallel(model)).half(),
                 'optimizer': optimizer.state_dict(),
                 'scheduler': scheduler.state_dict(),

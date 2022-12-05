@@ -4,18 +4,29 @@ import numpy as np
 import os
 import torch
 import torch.nn as nn
-import torchvision.models as models
 import torchvision.transforms as transforms
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('pth_file', nargs='?', type=str, default='checkpoint.pth', help='model path')
-    parser.add_argument('-s', '--source', type=str, default='data/images', help='file/dir/0(webcam)')
-    parser.add_argument('--gpu', default=None, type=int, help='GPU id to use. default use cpu')
+    parser.add_argument('pth_file',
+                        nargs='?',
+                        type=str,
+                        default='checkpoint.pth',
+                        help='model path')
+    parser.add_argument('-s',
+                        '--source',
+                        type=str,
+                        default='data/images',
+                        help='file/dir/0(webcam)')
+    parser.add_argument('--gpu',
+                        default=None,
+                        type=int,
+                        help='GPU id to use. default use cpu')
     opt = parser.parse_args()
-    
-    model: nn.Module = load_model(opt.pth_file, opt)
+
+    model: nn.Module = load_model(opt.pth_file, gpu=opt.gpu)
+    model = torch.nn.DataParallel(model).cuda()
     model.eval()
     source = str(opt.source)
     is_file = os.path.splitext(source)[1] in (".jpg", ".png")
@@ -35,26 +46,24 @@ def main():
                 print(f"{i}: [{os.path.basename(source)} <--> {label}] ({y})")
 
 
-def load_model(pth_path: str, opt, loc="cpu") -> nn.Module:
+def load_model(pth_path: str, gpu=None, loc="cpu") -> nn.Module:
     print("=> loading checkpoint '{}'".format(pth_path))
-    if opt.gpu is None:
+    if gpu is None:
         checkpoint = torch.load(pth_path, map_location=loc)
     elif torch.cuda.is_available():
         # Map model to be loaded to specified single opt..
-        loc = 'cuda:{}'.format(opt.gpu)
+        loc = 'cuda:{}'.format(gpu)
         checkpoint = torch.load(pth_path, map_location=loc)
 
-    try:
-        args = checkpoint["args"]
-        print("=> creating model '{}'".format(args.arch))
-        model: nn.Module = models.__dict__[args.arch](num_classes=checkpoint["num_classes"])
-        model = torch.nn.DataParallel(model).cuda()
-        print("=> loaded checkpoint '{}' (epoch {})".format(
-            pth_path, checkpoint['epoch']))
-        model.load_state_dict(checkpoint['state_dict'])
-    except:
-        print("direct load whole model")
-        model=torch.load(pth_path)
+    args = checkpoint["args"]
+    print("=> creating model '{}'".format(args.arch))
+    for p in checkpoint['model'].parameters():
+        p.requires_grad = False
+
+    # load model, checkpoint state_dict as FP32
+    model: nn.Module = checkpoint['model'].float()
+    print(f"=> loaded checkpoint '{pth_path}' (epoch {checkpoint['epoch']})")
+
     return model
 
 
