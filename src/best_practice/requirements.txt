@@ -1,0 +1,8 @@
+numpy
+Pillow
+tensorboard
+jupyter
+onnx
+onnxruntime
+tqdm
+opencv-python

@@ -24,20 +24,20 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.datasets as datasets
-import models
 import torchvision.transforms as transforms
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import Subset
 import torchvision.models as t_models
-
+import models
+from models.check_point import is_parallel, de_parallel, save_checkpoint
 from utils import PlotMonitor, increment_path, logger, TqdmToLogger, ConfusionMatrix
 
 model_names: list = sorted(name for name in models.__dict__
                            if name.islower() and not name.startswith("__")
                            and callable(models.__dict__[name]))
 model_names += sorted(name for name in t_models.__dict__
-                           if name.islower() and not name.startswith("__")
-                           and callable(t_models.__dict__[name]))
+                      if name.islower() and not name.startswith("__")
+                      and callable(t_models.__dict__[name]))
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('data',
@@ -248,16 +248,7 @@ def main_worker(gpu, ngpus_per_node, args):
     args.class_list = class_list
 
     # create model
-    model: nn.Module
-    if args.pretrained:
-        logger("=> using pre-trained model '{}'".format(args.arch))
-        model = models.__dict__[args.arch](pretrained=True)
-    else:
-        logger("=> creating model '{}'".format(args.arch))
-        if args.arch.startswith("my_"):
-            model = models.__dict__[args.arch](num_classes=args.class_num)
-        else:
-            model = t_models.__dict__[args.arch](num_classes=args.class_num)
+    model: nn.Module = create_model(args.arch, args.class_num, args.pretrained)
     # optionally resume from a checkpoint
     if args.resume:
         if os.path.isfile(args.resume):
@@ -401,11 +392,10 @@ def main_worker(gpu, ngpus_per_node, args):
             ckpt = {
                 'epoch': epoch + 1,
                 'best_acc1': best_acc1,
-                'args' : args,
+                'args': args,
                 'model': deepcopy(de_parallel(model)).half(),
                 'optimizer': optimizer.state_dict(),
                 'scheduler': scheduler.state_dict(),
-                'opt': vars(args),
                 'date': time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())
             }
 
@@ -504,8 +494,9 @@ def validate(val_loader, model, criterion, args, display_hook: Callable):
                 if i % args.print_freq == 0:
                     pbar.set_description(('%11s') % progress)
                     display_hook(sys._getframe().f_code.co_name, progress)
-            confusion_matrix.print()
-            confusion_matrix.plot(save_dir=args.artifact_path, names=args.class_list)
+            # confusion_matrix.print()
+            confusion_matrix.plot(save_dir=args.artifact_path,
+                                  names=args.class_list)
 
     losses = AverageMeter('Loss', ':.4e', Summary.NONE)
     top1 = AverageMeter('Acc@1', ':.2f', Summary.AVERAGE)
@@ -544,8 +535,25 @@ def validate(val_loader, model, criterion, args, display_hook: Callable):
     return top1.avg
 
 
+def create_model(arch: str,
+                 class_num: int,
+                 pretrained: bool = False) -> nn.Module:
+
+    model: nn.Module
+    if pretrained:
+        logger("=> using pre-trained model '{}'".format(arch))
+        model = models.__dict__[arch](pretrained=True)
+    else:
+        logger("=> creating model '{}'".format(arch))
+        if arch.startswith("my_"):
+            model = models.__dict__[arch](num_classes=class_num)
+        else:
+            model = t_models.__dict__[arch](num_classes=class_num)
+    return model
+
+
 def get_dataset(
-        args
+    args
 ) -> Tuple[torch.utils.data.Dataset, torch.utils.data.Dataset, int, dict]:
     if args.dummy:
         logger("=> Dummy data is used!")
@@ -597,7 +605,7 @@ def get_dataset(
         #                                         normalize,
         #                                     ]))
     class_num: int = 0
-    class_list:list = []
+    class_list: list = []
     try:
         for c in train_dataset.classes:
             class_num += 1
@@ -607,25 +615,6 @@ def get_dataset(
     except AttributeError:  #'FakeData' object has no attribute 'classes'
         pass
     return (train_dataset, val_dataset, class_num, class_list)
-
-
-def is_parallel(model):
-    # Returns True if model is of type DP or DDP
-    return type(model) in (nn.parallel.DataParallel,
-                           nn.parallel.DistributedDataParallel)
-
-
-def de_parallel(model):
-    # De-parallelize a model: returns single-GPU model if model is of type DP or DDP
-    return model.module if is_parallel(model) else model
-
-
-def save_checkpoint(state, is_best: bool, filename: str = 'checkpoint.pth'):
-    assert filename.endswith('.pth')
-    torch.save(state, filename)
-    if is_best:
-        new_name = filename[:-4] + "_best" + filename[-4:]
-        shutil.copyfile(filename, new_name)
 
 
 class Summary(Enum):

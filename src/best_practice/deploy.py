@@ -56,7 +56,7 @@ def load_model(pth_path: str, gpu=None, loc="cpu") -> nn.Module:
         checkpoint = torch.load(pth_path, map_location=loc)
 
     args = checkpoint["args"]
-    print("=> creating model '{}'".format(args.arch))
+    print("=> creating model '{}' on {}".format(args.arch, loc))
     for p in checkpoint['model'].parameters():
         p.requires_grad = False
 
